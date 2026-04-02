@@ -32,8 +32,10 @@ import asyncio
 import json
 import shutil
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Request
+
+from utils.schema import InboundMessage, PromptRequest, PromptResponse
+from utils.telegram_utils import parse_telegram
 
 app = FastAPI(title="Claude Code Local API", version="1.0.0")
 
@@ -51,36 +53,6 @@ def check_claude_binary():
             "Then log in:   claude"
         )
     print(f"✓ Claude Code binary: {CLAUDE_BIN}")
-
-
-# ── Schemas ───────────────────────────────────────────────────────────────
-
-class PromptRequest(BaseModel):
-    prompt: str
-
-    # Working directory — Claude Code reads/writes relative to this path
-    cwd: str | None = None
-
-    # Pass the session_id from a previous response to continue a conversation
-    session_id: str | None = None
-
-    # Optional system prompt override
-    system_prompt: str | None = None
-
-    # Tools Claude is allowed to use without asking.
-    # Examples: ["Read", "Edit", "Bash(git:*)", "Bash(npm test)"]
-    # Falls back to whatever is set in .claude/settings.json if omitted.
-    allowed_tools: list[str] | None = None
-
-    # Tools Claude must never use, even if listed in allowed_tools.
-    # Deny always wins. Example: ["Bash(rm:*)", "Bash(curl:*)"]
-    disallowed_tools: list[str] | None = None
-
-
-class PromptResponse(BaseModel):
-    response: str
-    session_id: str | None
-    cost_usd: float | None
 
 
 # ── Core: run claude CLI as subprocess ───────────────────────────────────
@@ -146,6 +118,28 @@ async def run_claude(req: PromptRequest) -> dict:
 @app.get("/health")
 def health():
     return {"status": "ok", "claude_bin": CLAUDE_BIN}
+
+
+@app.post("/telegram/webhook", response_model=InboundMessage)
+async def telegram_webhook(request: Request):
+    """
+    Telegram Bot webhook endpoint.
+    Telegram POSTs Update objects here; we parse them into InboundMessage.
+    Register with: https://api.telegram.org/bot<TOKEN>/setWebhook?url=<your-url>/telegram/webhook
+    """
+    try:
+        update = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    try:
+        msg = parse_telegram(update)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Cannot parse Telegram update: {exc}")
+
+    # TODO: look up session_id and sender_role from DB using msg.sender_id / msg.group_id
+
+    return msg
 
 
 @app.post("/prompt", response_model=PromptResponse)
