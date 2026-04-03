@@ -35,7 +35,7 @@ import shutil
 from fastapi import FastAPI, HTTPException, Request
 
 from utils.schema import InboundMessage, PromptRequest, PromptResponse
-from utils.telegram_utils import get_telegram_webhook_info, parse_telegram, send_telegram_message, set_telegram_webhook
+from bridges import telegram, twilio
 
 app = FastAPI(title="Claude Code Local API", version="1.0.0")
 
@@ -119,7 +119,7 @@ async def run_claude(req: PromptRequest) -> dict:
 async def health():
     telegram_status = {"status": "unknown"}
     try:
-        info = await get_telegram_webhook_info()
+        info = await telegram.get_webhook_info()
         webhook = info.get("result", {})
         telegram_status = {
             "status": "ok" if webhook.get("url") else "not_set",
@@ -130,14 +130,25 @@ async def health():
     except Exception as exc:
         telegram_status = {"status": "error", "detail": str(exc)}
 
-    return {"status": "ok", "claude_bin": CLAUDE_BIN, "telegram": telegram_status}
+    twilio_status = {"status": "unknown"}
+    try:
+        info = await twilio.get_account_info()
+        twilio_status = {
+            "status": "ok" if info.get("status") == "active" else info.get("status"),
+            "account_sid": info.get("sid"),
+            "friendly_name": info.get("friendly_name"),
+        }
+    except Exception as exc:
+        twilio_status = {"status": "error", "detail": str(exc)}
+
+    return {"status": "ok", "claude_bin": CLAUDE_BIN, "telegram": telegram_status, "twilio": twilio_status}
 
 
 @app.get("/telegram/set-webhook")
 async def telegram_set_webhook(url: str):
     """Register a webhook URL with Telegram. Call once after deployment."""
     try:
-        result = await set_telegram_webhook(url)
+        result = await telegram.set_webhook(url)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Telegram API error: {exc}")
     return result
@@ -156,14 +167,36 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     try:
-        msg = parse_telegram(update)
+        msg = telegram.parse_webhook(update)
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=f"Cannot parse Telegram update: {exc}")
 
     # TODO: look up session_id and sender_role from DB using msg.sender_id / msg.group_id
 
     chat_id = msg.group_id if msg.context_type == "group" else msg.sender_id
-    await send_telegram_message(chat_id, "Got it!")
+    await telegram.send_message(chat_id, "Got it!")
+
+    return msg
+
+
+@app.post("/twilio_whatsapp/webhook", response_model=InboundMessage)
+async def whatsapp_webhook(request: Request):
+    """
+    Twilio WhatsApp webhook endpoint.
+    Twilio POSTs form-encoded data here on each incoming WA message.
+    Set this URL in the Twilio console under Messaging → Sandbox (or your number) → Webhook.
+    """
+    form = await request.form()
+
+    try:
+        msg = twilio.parse_whatsapp_webhook(dict(form))
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Cannot parse Twilio webhook: {exc}")
+
+    # TODO: look up session_id and sender_role from DB using msg.sender_id
+
+    twilio_number = dict(form).get("To", "").removeprefix("whatsapp:")
+    await twilio.send_whatsapp_message(recipient_number=msg.sender_id, sender_number=twilio_number, text="Got it!")
 
     return msg
 

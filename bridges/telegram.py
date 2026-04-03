@@ -15,7 +15,7 @@ PRIORITY_KEYWORDS = {"urgent", "דחוף", "asap", "emergency", "חשוב"}
 BOT_MENTION_PREFIX = "@"
 
 
-def parse_telegram(update: dict) -> InboundMessage:
+def parse_webhook(update: dict) -> InboundMessage:
     msg = update.get("message") or update.get("edited_message")
     if not msg:
         raise ValueError("No 'message' field in Telegram update")
@@ -67,7 +67,7 @@ def parse_telegram(update: dict) -> InboundMessage:
     )
 
 
-async def send_telegram_message(chat_id: str | int, text: str, parse_mode: str = "Markdown") -> dict:
+async def send_message(chat_id: str | int, text: str, parse_mode: str = "Markdown") -> dict:
     """POST a message to a Telegram chat via the Bot API."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -82,7 +82,7 @@ async def send_telegram_message(chat_id: str | int, text: str, parse_mode: str =
         return response.json()
 
 
-async def get_telegram_webhook_info() -> dict:
+async def get_webhook_info() -> dict:
     """Fetch current webhook info from the Telegram Bot API."""
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{TELEGRAM_API_BASE}/getWebhookInfo")
@@ -90,7 +90,7 @@ async def get_telegram_webhook_info() -> dict:
         return response.json()
 
 
-async def set_telegram_webhook(webhook_url: str) -> dict:
+async def set_webhook(webhook_url: str) -> dict:
     """Register a webhook URL with the Telegram Bot API."""
     async with httpx.AsyncClient() as client:
         response = await client.get(
