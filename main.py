@@ -35,7 +35,7 @@ import shutil
 from fastapi import FastAPI, HTTPException, Request
 
 from utils.schema import InboundMessage, PromptRequest, PromptResponse
-from utils.telegram_utils import parse_telegram
+from utils.telegram_utils import get_telegram_webhook_info, parse_telegram, send_telegram_message, set_telegram_webhook
 
 app = FastAPI(title="Claude Code Local API", version="1.0.0")
 
@@ -116,8 +116,31 @@ async def run_claude(req: PromptRequest) -> dict:
 # ── Routes ────────────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "claude_bin": CLAUDE_BIN}
+async def health():
+    telegram_status = {"status": "unknown"}
+    try:
+        info = await get_telegram_webhook_info()
+        webhook = info.get("result", {})
+        telegram_status = {
+            "status": "ok" if webhook.get("url") else "not_set",
+            "url": webhook.get("url"),
+            "pending_update_count": webhook.get("pending_update_count"),
+            "last_error_message": webhook.get("last_error_message"),
+        }
+    except Exception as exc:
+        telegram_status = {"status": "error", "detail": str(exc)}
+
+    return {"status": "ok", "claude_bin": CLAUDE_BIN, "telegram": telegram_status}
+
+
+@app.get("/telegram/set-webhook")
+async def telegram_set_webhook(url: str):
+    """Register a webhook URL with Telegram. Call once after deployment."""
+    try:
+        result = await set_telegram_webhook(url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Telegram API error: {exc}")
+    return result
 
 
 @app.post("/telegram/webhook", response_model=InboundMessage)
@@ -138,6 +161,9 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=422, detail=f"Cannot parse Telegram update: {exc}")
 
     # TODO: look up session_id and sender_role from DB using msg.sender_id / msg.group_id
+
+    chat_id = msg.group_id if msg.context_type == "group" else msg.sender_id
+    await send_telegram_message(chat_id, "Got it!")
 
     return msg
 

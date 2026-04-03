@@ -1,7 +1,15 @@
+import os
 from typing import Optional
+
+import httpx
+from dotenv import load_dotenv
 
 from utils.schema import InboundMessage
 
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+TELEGRAM_API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 PRIORITY_KEYWORDS = {"urgent", "דחוף", "asap", "emergency", "חשוב"}
 BOT_MENTION_PREFIX = "@"
@@ -57,3 +65,37 @@ def parse_telegram(update: dict) -> InboundMessage:
         media=media,
         raw_timestamp=msg["date"],
     )
+
+
+async def send_telegram_message(chat_id: str | int, text: str, parse_mode: str = "Markdown") -> dict:
+    """POST a message to a Telegram chat via the Bot API."""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{TELEGRAM_API_BASE}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": parse_mode,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def get_telegram_webhook_info() -> dict:
+    """Fetch current webhook info from the Telegram Bot API."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{TELEGRAM_API_BASE}/getWebhookInfo")
+        response.raise_for_status()
+        return response.json()
+
+
+async def set_telegram_webhook(webhook_url: str) -> dict:
+    """Register a webhook URL with the Telegram Bot API."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{TELEGRAM_API_BASE}/setWebhook",
+            params={"url": webhook_url},
+        )
+        response.raise_for_status()
+        return response.json()
